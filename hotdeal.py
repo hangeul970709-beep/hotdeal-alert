@@ -36,8 +36,20 @@ def seen_id(key: str) -> str:
     return hashlib.sha256(f"hotdeal-alert:{key}".encode()).hexdigest()[:16]
 
 
+LOG_PATH = ROOT / "hotdeal.log"
+BLOCK_FLAG = ROOT / "blocked.flag"
+WRITE_LOG = True  # --dry-run 이면 끔
+
+
 def log(msg: str) -> None:
-    print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}", flush=True)
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}"
+    if sys.stdout:  # pythonw(창 없이 실행)에서는 stdout 이 없음
+        print(line, flush=True)
+    if WRITE_LOG:
+        if LOG_PATH.exists() and LOG_PATH.stat().st_size > 1_000_000:  # 1MB 넘으면 뒤쪽 절반만 남김
+            LOG_PATH.write_text(LOG_PATH.read_text(encoding="utf-8")[-500_000:], encoding="utf-8")
+        with LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
 
 @dataclass
@@ -193,10 +205,16 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--test", action="store_true")
     args = ap.parse_args()
+    global WRITE_LOG
+    WRITE_LOG = not args.dry_run
 
     if args.test:
-        kakao.send_memo("[핫딜 알리미] 테스트 메시지입니다. 연결 성공!", "https://www.fmkorea.com/hotdeal")
+        kakao.send_memo("[핫딜 알리미] 테스트 메시지입니다. 연결 성공!", "https://arca.live/b/hotdeal")
         log("테스트 메시지 전송 완료")
+        return 0
+
+    if BLOCK_FLAG.exists() and not args.dry_run:
+        log("정지 중: 사이트 차단이 감지돼 멈춘 상태입니다. 확인 후 blocked.flag 를 지우면 재개됩니다.")
         return 0
 
     seen: list[str] = json.loads(SEEN_PATH.read_text(encoding="utf-8")) if SEEN_PATH.exists() else []
@@ -204,15 +222,29 @@ def main() -> int:
     first_run = not seen_set and not CFG.get("notifyOnFirstRun", False)
 
     deals: dict[str, Deal] = {}
-    errors = 0
-    for url, parser in list_urls():
+    errors = forbidden = 0
+    urls = list_urls()
+    for url, parser in urls:
         try:
             for d in parser(get_html(url)):
                 deals.setdefault(d.key, d)
         except Exception as e:
             errors += 1
+            if isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code in (403, 429, 430):
+                forbidden += 1
             log(f"목록 실패 {url}: {e}")
         time.sleep(1.5)
+
+    # 모든 목록이 거부(403 등)되면 사이트가 이 봇을 막은 것으로 보고 스스로 멈춥니다 (우회하지 않음).
+    if forbidden == len(urls) and not args.dry_run:
+        BLOCK_FLAG.write_text(datetime.now().isoformat(), encoding="utf-8")
+        log("사이트가 요청을 거부해 알리미를 멈췄습니다.")
+        try:
+            kakao.send_memo("[핫딜 알리미] 사이트가 요청을 거부해서 알리미를 멈췄어요. "
+                            "확인 후 blocked.flag 파일을 지우면 다시 돌아갑니다.", "https://arca.live/b/hotdeal")
+        except Exception as e:
+            log(f"정지 알림 전송 실패: {e}")
+        return 1
 
     title_re = re.compile(CFG["titleFilter"], re.I)
     sent = 0
@@ -256,4 +288,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        import traceback
+        log("오류:\n" + traceback.format_exc())
+        sys.exit(1)

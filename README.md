@@ -1,66 +1,140 @@
 # 상품권 핫딜 알리미
 
-아카라이브 핫딜(상품권/쿠폰 카테고리 + 전체 최신글 1페이지)을
-GitHub Actions에서 30분마다 확인해서, **구글 플레이 기프트카드 / 컬쳐랜드(문화상품권)** 글 중
-**할인율 7% 이상**이면 카카오톡 "나와의 채팅"으로 알려줍니다. PC가 꺼져 있어도 돌아갑니다.
+아카라이브 핫딜(상품권/쿠폰 카테고리 + 전체 최신글 1페이지)을 30분마다 확인해서,
+**구글 플레이 기프트카드 / 컬쳐랜드(문화상품권)** 글 중 **할인율 7% 이상**이면
+카카오톡 "나와의 채팅"으로 알려줍니다.
 
 할인율 판단 순서: 제목의 `%`/`퍼` 표기 → 제목의 액면가(예: 5만원권) 대비 가격 → 본문의 `%` 표기 → 가격 바로 위 권종으로 추정(27,900원 → 3만원권 7%).
 설정(`config.json`): `minDiscount`, 제목 필터 정규식, 카테고리·검색어.
 
-> 펨코는 robots.txt에서 핫딜 게시판·검색의 자동 수집을 막고 있어 기본으로 꺼 두었습니다
-> (`config.json`의 `fmkorea` 항목이 비어 있음). 코드는 남아 있어 값을 채우면 다시 켜집니다.
->
-> 요청은 브라우저로 위장하지 않고 `hotdeal-alert/1.0` 이라는 봇 이름을 그대로 밝힙니다.
-> 아카라이브 검색 페이지는 봇에게 열려 있지 않아 쓰지 않습니다. `seen.json`에는 글 번호 대신 해시값만 저장합니다.
+### 수집 원칙
+
+- 요청은 브라우저로 위장하지 않고 `hotdeal-alert/1.0` 이라는 봇 이름을 그대로 밝힙니다.
+- 펨코는 robots.txt에서 핫딜 게시판·검색의 자동 수집을 막고 있어 꺼 두었습니다 (`config.json`의 `fmkorea` 항목이 비어 있음).
+- 아카라이브 검색 페이지는 봇에게 열려 있지 않아 쓰지 않습니다.
+- 아카라이브는 데이터센터(GitHub Actions·클라우드 서버) IP의 봇 요청을 403으로 막습니다.
+  그래서 **집 인터넷에 연결된 기기**(PC, 안드로이드 태블릿/폰, 라즈베리파이)에서 돌립니다.
+- 목록 요청이 전부 거부(403/429/430)되면 `blocked.flag` 를 만들고 카톡으로 알린 뒤 **스스로 멈춥니다.**
+  우회하지 말고, 상황을 확인한 다음 `blocked.flag` 를 지우면 재개됩니다.
+- `seen.json` 에는 글 번호 대신 해시값만 저장합니다.
 
 ---
 
-## 1. 카카오 앱 만들기 (최초 1회)
+## 1. 카카오 앱 & 토큰 (최초 1회, 완료됨)
 
-[developers.kakao.com](https://developers.kakao.com) → 로그인 → **내 애플리케이션 → 애플리케이션 추가** (이름 아무거나)
+[developers.kakao.com](https://developers.kakao.com) → 내 애플리케이션 → 앱 추가 후:
 
-1. **앱 키**에서 **REST API 키** 복사
-2. **카카오 로그인** → 활성화 **ON**, **Redirect URI**에 `http://localhost:8765/callback` 등록
-3. **카카오 로그인 → 동의항목** → **카카오톡 메시지 전송(talk_message)** 을 "선택 동의"로 설정
-4. **플랫폼 → Web** → 사이트 도메인에 `https://www.fmkorea.com`, `https://arca.live` 등록 (카톡의 "게시글 보기" 버튼용)
-5. **보안 → Client Secret** 이 "사용함"이면 코드값도 복사
+1. **REST API 키**, **Client Secret** 복사 (앱 → 플랫폼 키)
+2. **카카오 로그인** 사용 설정 ON, Redirect URI `http://localhost:8765/callback`
+3. **동의항목** → 카카오톡 메시지 전송(talk_message) "선택 동의"
+4. (선택) 웹 도메인에 `https://arca.live` 등록 — 카톡의 "게시글 보기" 버튼용
 
-(콘솔 메뉴 이름은 조금 다를 수 있습니다.)
-
-## 2. 카카오 로그인 & 토큰 받기 (로컬, 최초 1회)
+PC에서 한 번 로그인하면 `kakao_token.json` 이 만들어집니다 (refresh token은 실행할 때마다 자동 갱신).
 
 ```powershell
-cd C:\Users\LEE\.claude\hotdeal-alert
-```
-```powershell
-& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" kakao_login.py <REST_API_키> [<Client_Secret>]
+& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" kakao_login.py <REST_API_키> <Client_Secret>
 ```
 
-브라우저에서 동의하면 카톡 "나와의 채팅"에 테스트 메시지가 오고, 터미널에 **refresh token** 이 출력됩니다.
+`kakao_token.json` 은 비밀번호 같은 파일입니다. git에 올라가지 않으며(.gitignore), 채팅·메신저로 공유하지 마세요.
 
-## 3. GitHub에 올리기
+---
 
-1. GitHub에서 **Public** 저장소 생성 (예: `hotdeal-alert`, README 없이)
-   - Public이어야 Actions 실행 시간이 무제한 무료입니다. 키는 코드가 아닌 Secrets에만 들어갑니다.
-2. 이 폴더를 push
-   ```powershell
-   git init -b main; git add .; git commit -m "init"; git remote add origin https://github.com/<아이디>/hotdeal-alert.git; git push -u origin main
+## 2. 윈도우 PC (현재 사용 중)
+
+작업 스케줄러 작업 **HotdealAlert** 가 30분마다, 그리고 로그인할 때 `pythonw.exe hotdeal.py` 를 창 없이 실행합니다.
+PC가 꺼져 있다가 켜지면 바로 한 번 실행되고, 상품권 카테고리 1페이지에 며칠치 글이 있어 꺼져 있던 동안의 딜도 대부분 잡힙니다.
+
+- 로그 보기: `hotdeal.log`
+- 일시정지 / 재개 / 삭제
+  ```powershell
+  Disable-ScheduledTask HotdealAlert
+  ```
+  ```powershell
+  Enable-ScheduledTask HotdealAlert
+  ```
+  ```powershell
+  Unregister-ScheduledTask HotdealAlert -Confirm:$false
+  ```
+
+---
+
+## 3. 안드로이드 태블릿 / 폰 (Termux)
+
+충전기에 꽂아 집 와이파이에 두면 24시간 돌릴 수 있습니다.
+
+1. **Termux 설치** — [F-Droid](https://f-droid.org/packages/com.termux/) 또는 [GitHub 릴리스](https://github.com/termux/termux-app/releases)에서 받으세요
+   (Play 스토어 버전은 오래돼서 패키지 설치가 안 될 수 있습니다). 같은 곳에서 **Termux:API** 도 설치하면 좋습니다.
+2. **패키지 설치** (Termux에서)
+   ```sh
+   pkg update -y && pkg install -y python git cronie termux-services
    ```
-3. **Fine-grained Personal Access Token** 생성 (Settings → Developer settings → Fine-grained tokens)
-   - Repository access: 이 저장소만 / Permissions: **Secrets: Read and write**
-   - refresh token이 갱신될 때 워크플로가 Secret을 자동으로 바꾸는 데 씁니다.
-4. 저장소 **Settings → Secrets and variables → Actions → New repository secret**
-   | 이름 | 값 |
-   |---|---|
-   | `KAKAO_REST_API_KEY` | REST API 키 |
-   | `KAKAO_CLIENT_SECRET` | Client Secret (안 쓰면 생략) |
-   | `KAKAO_REFRESH_TOKEN` | 2단계에서 출력된 refresh token |
-   | `GH_PAT` | 3번의 토큰 |
-5. **Actions 탭 → hotdeal-alert → Run workflow** → `test` 체크 후 실행 → 카톡 수신 확인
-6. 이후엔 30분마다 자동 실행. 첫 실행은 기존 글을 기록만 하고, 그 뒤 새로 올라오는 글만 알립니다.
+   ```sh
+   git clone https://github.com/hangeul970709-beep/hotdeal-alert ~/hotdeal-alert && cd ~/hotdeal-alert && pip install -r requirements.txt
+   ```
+3. **PC에서 `kakao_token.json`, `seen.json` 옮기기** — USB 케이블로 태블릿의 `Download` 폴더에 복사한 뒤:
+   ```sh
+   termux-setup-storage
+   ```
+   ```sh
+   cp ~/storage/downloads/kakao_token.json ~/storage/downloads/seen.json ~/hotdeal-alert/ && rm ~/storage/downloads/kakao_token.json
+   ```
+4. **동작 확인**
+   ```sh
+   cd ~/hotdeal-alert && python hotdeal.py --test && python hotdeal.py --dry-run
+   ```
+5. **30분마다 실행 등록**
+   ```sh
+   sv-enable crond
+   ```
+   ```sh
+   (crontab -l 2>/dev/null; echo '7,37 * * * * cd ~/hotdeal-alert && python hotdeal.py') | crontab -
+   ```
+   Termux를 한 번 껐다 켜서 `crond` 서비스가 뜨게 하세요.
+6. **꺼지지 않게 하기**
+   - 알림창의 Termux 알림에서 **Acquire wakelock** 누르기 (또는 `termux-wake-lock`)
+   - 안드로이드 설정 → 앱 → Termux → 배터리 → **제한 없음(최적화 안 함)**
+   - 삼성 기기는 설정 → 배터리 → 백그라운드 사용 제한에서 Termux를 **"절전 예외 앱"** 으로 추가
+7. **PC 작업 끄기** (중복 알림 방지): PC에서 `Disable-ScheduledTask HotdealAlert`
 
-## 참고
+---
 
-- 실행 기록: Actions 탭의 각 실행 로그 (`sent` / `skip` 줄)
-- 목록 요청이 전부 실패하면 실행이 빨간색(실패)으로 표시됩니다 → 사이트가 GitHub 서버 IP를 차단한 것일 수 있습니다.
-- 로컬 확인: `python hotdeal.py --dry-run` (전송·기록 없이 파싱 결과만 출력)
+## 4. 라즈베리파이 같은 소형 PC (리눅스)
+
+1. **OS 설치** — [Raspberry Pi Imager](https://www.raspberrypi.com/software/)로 *Raspberry Pi OS Lite (64-bit)* 를 SD카드에 굽기.
+   굽기 전 설정(톱니바퀴)에서 사용자 이름/비밀번호, 와이파이, **SSH 사용**을 켜두면 모니터 없이 설정할 수 있습니다.
+2. **PC에서 접속** (사용자 이름이 `pi`, 호스트 이름이 `raspberrypi` 인 경우)
+   ```powershell
+   ssh pi@raspberrypi.local
+   ```
+3. **설치** (라즈베리파이에서)
+   ```sh
+   sudo apt update && sudo apt install -y git python3-venv
+   ```
+   ```sh
+   git clone https://github.com/hangeul970709-beep/hotdeal-alert ~/hotdeal-alert && cd ~/hotdeal-alert && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+   ```
+4. **PC에서 토큰·기록 파일 복사** (PC의 PowerShell에서)
+   ```powershell
+   scp C:\Users\LEE\.claude\hotdeal-alert\kakao_token.json C:\Users\LEE\.claude\hotdeal-alert\seen.json pi@raspberrypi.local:~/hotdeal-alert/
+   ```
+5. **동작 확인 & 30분마다 실행 등록** (라즈베리파이에서)
+   ```sh
+   cd ~/hotdeal-alert && .venv/bin/python hotdeal.py --test && .venv/bin/python hotdeal.py --dry-run
+   ```
+   ```sh
+   (crontab -l 2>/dev/null; echo '7,37 * * * * cd ~/hotdeal-alert && .venv/bin/python hotdeal.py') | crontab -
+   ```
+6. **PC 작업 끄기**: PC에서 `Disable-ScheduledTask HotdealAlert`
+
+---
+
+## 기기를 옮길 때 체크리스트
+
+- `kakao_token.json` 과 `seen.json` 을 **같이** 옮기기 (seen.json이 없으면 첫 실행은 기존 글을 기록만 하고 알림을 보내지 않습니다)
+- 한 번에 **한 기기에서만** 돌리기 — 두 곳에서 돌리면 알림이 두 번 오고, refresh token이 갱신될 때 한쪽 토큰이 낡을 수 있습니다
+- 카카오 refresh token은 약 2개월 동안 한 번도 안 쓰면 만료됩니다. 그러면 PC에서 `kakao_login.py` 를 다시 실행해 새 `kakao_token.json` 을 만드세요
+
+## GitHub Actions 워크플로
+
+`.github/workflows/hotdeal.yml` 은 남아 있지만, 아카라이브가 GitHub 서버 IP를 막기 때문에 **꺼 두었습니다**(disabled).
+`--test` 카톡 전송 확인용으로만 수동 실행할 수 있습니다.

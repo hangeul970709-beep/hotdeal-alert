@@ -2,3 +2,5 @@ kakao_token.json
 new_refresh_token.txt
 __pycache__/
 set_secrets.ps1
+hotdeal.log
+blocked.flag
