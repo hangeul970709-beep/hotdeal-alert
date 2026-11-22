@@ -79,6 +79,25 @@ PC가 꺼져 있다가 켜지면 바로 한 번 실행되고, 상품권 카테�
   Unregister-ScheduledTask HotdealAlert -Confirm:$false
   ```
 
+### 다른 윈도우 PC / 서브 노트북으로 옮기기
+
+1. 원래 PC에서 이 폴더(`hotdeal-alert`)를 **통째로** USB로 노트북에 복사합니다
+   (`telegram_token.json`, `seen.json` 이 함께 들어 있어야 합니다). 메신저·클라우드로 보내지 마세요.
+2. 노트북에서 복사한 폴더 안으로 이동한 뒤 설치 스크립트를 실행합니다. 관리자 권한은 필요 없습니다.
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\install.ps1 -LaptopPower
+   ```
+   Python 3.12 설치 → 패키지 설치 → 사이트 접속 확인 → 작업 스케줄러 등록 → 텔레그램 테스트 메시지까지 진행합니다.
+   `-LaptopPower` 는 전원 연결 시 덮개를 닫아도 켜두고 절전하지 않게 설정합니다 (빼면 전원 설정은 그대로).
+3. 텔레그램 테스트 메시지가 오면, **원래 PC에서 작업을 끕니다** (두 곳에서 돌면 알림이 두 번 옵니다).
+   ```powershell
+   Disable-ScheduledTask HotdealAlert
+   ```
+4. 노트북 권장 설정: 충전기 연결, 제조사 프로그램의 배터리 충전 한도(예: 80%), 노트북 전용이면 자동 로그인
+   (윈도우 업데이트로 재부팅되면 로그인할 때까지 멈추기 때문).
+
+작업만 지우려면 `powershell -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall`.
+
 ---
 
 ## 3. 안드로이드 태블릿 / 폰 (Termux)
