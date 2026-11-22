@@ -1,0 +1,62 @@
+name: hotdeal-alert
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # 10분마다 (GitHub 사정에 따라 몇 분 늦어질 수 있음)
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "카톡 테스트 메시지만 보내기"
+        type: boolean
+        default: false
+
+concurrency:
+  group: hotdeal
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+      KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+      KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run
+        run: |
+          if [ "${{ inputs.test }}" = "true" ]; then
+            python hotdeal.py --test
+          else
+            python hotdeal.py
+          fi
+
+      # 카카오가 새 refresh token 을 발급하면 Secret 을 갱신 (GH_PAT 필요)
+      - name: Rotate Kakao refresh token
+        if: always() && hashFiles('new_refresh_token.txt') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh secret set KAKAO_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY" < new_refresh_token.txt
+          rm new_refresh_token.txt
+
+      # 이미 확인한 글 목록 저장 (커밋이 생기면 60일 비활성으로 스케줄이 꺼지는 것도 방지)
+      - name: Save seen.json
+        if: always()
+        run: |
+          git config user.name "hotdeal-bot"
+          git config user.email "hotdeal-bot@users.noreply.github.com"
+          git add seen.json
+          git diff --cached --quiet || (git commit -m "update seen" && git pull --rebase && git push)

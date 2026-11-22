@@ -1,0 +1,13 @@
+{
+  "minDiscount": 7,
+  "titleFilter": "(구글|google|플레이\\s*스토어).*(기프트|카드|코드|상품권|쿠폰)|기프트\\s*카드.*(구글|google)|컬[쳐처]\\s*랜드|문화\\s*상품권",
+  "notifyOnFirstRun": false,
+  "fmkorea": {
+    "categories": ["1200454594"],
+    "searchKeywords": ["구글"]
+  },
+  "arca": {
+    "categories": ["gift"],
+    "searchKeywords": ["구글"]
+  }
+}
