@@ -1,5 +1,13 @@
-[
-"71287730ad0d2d52",
-"489ea62c63eee12b",
-"a11e41248bc8fbee"
-]
+{
+ "sources": [
+  "arca",
+  "clien",
+  "ppom",
+  "ruli"
+ ],
+ "ids": [
+  "71287730ad0d2d52",
+  "489ea62c63eee12b",
+  "a11e41248bc8fbee"
+ ]
+}

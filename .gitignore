@@ -1,4 +1,5 @@
 kakao_token.json
+telegram_token.json
 new_refresh_token.txt
 __pycache__/
 set_secrets.ps1

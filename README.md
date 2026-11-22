@@ -6,10 +6,8 @@
 - **뽐뿌** 뽐뿌게시판 — 공식 RSS
 - **루리웹** 유저 핫딜 — 공식 RSS
 - **클리앙** 알뜰구매 — 목록 1페이지 (품절 표시된 글은 제외)
-
-
 **구글 플레이 기프트카드 / 컬쳐랜드(문화상품권)** 글 중 **할인율 7% 이상**이면
-카카오톡 "나와의 채팅"으로 알려줍니다.
+**텔레그램 봇**으로 알려줍니다 (`config.json`의 `notify`에 `"kakao"`를 넣으면 카톡 "나와의 채팅"으로도 보냄).
 
 할인율 판단 순서: 제목의 `%`/`퍼` 표기 → 제목의 액면가(예: 5만원권) 대비 가격 → 본문의 `%` 표기 → 가격 바로 위 권종으로 추정(27,900원 → 3만원권 7%).
 설정(`config.json`): `minDiscount`, 제목 필터 정규식, 카테고리·검색어.
@@ -24,14 +22,28 @@
 - 뽐뿌·루리웹은 사이트가 자동 수집용으로 공식 제공하는 RSS를 씁니다 (robots.txt도 허용).
 - 클리앙은 robots.txt가 게시판(`/service/board/`) 수집을 허용합니다.
 - 퀘이사존·쿨엔조이는 robots.txt로 게시판 수집을 막고 있어 넣지 않았습니다.
-- 한 사이트의 요청이 전부 거부(403/429/430)되면 그 사이트를 `blocked.json` 에 적고 카톡으로 알린 뒤
+- 한 사이트의 요청이 전부 거부(403/429/430)되면 그 사이트를 `blocked.json` 에 적고 알림을 보낸 뒤
   **그 사이트만 확인을 멈춥니다.** 우회하지 말고, 상황을 확인한 다음 `blocked.json` 에서 지우면 재개됩니다.
 - 사이트를 새로 추가하면 그 사이트의 첫 실행은 이미 올라와 있던 글을 기록만 하고 알림을 보내지 않습니다.
 - `seen.json` 에는 글 번호 대신 해시값만 저장합니다.
 
 ---
 
-## 1. 카카오 앱 & 토큰 (최초 1회, 완료됨)
+## 1. 텔레그램 봇 연결 (최초 1회)
+
+1. 텔레그램에서 **@BotFather** 검색 → 대화 시작 → `/newbot`
+2. 봇 이름(예: `핫딜 알리미`)과 사용자명(영문, `bot`으로 끝나야 함, 예: `my_giftcard_deal_bot`)을 입력
+3. BotFather가 주는 **토큰**(`123456789:AA...` 형태)을 복사 — 비밀번호처럼 다루세요
+4. BotFather 메시지의 `t.me/...` 링크로 내 봇 대화방을 열고 **시작(Start)** 을 누르거나 아무 메시지나 보내기
+5. PC에서 실행
+   ```powershell
+   & "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" telegram_setup.py <봇_토큰>
+   ```
+   내 chat_id를 찾아 `telegram_token.json`에 저장하고, 봇 대화방으로 테스트 메시지를 보냅니다.
+
+`telegram_token.json`은 git에 올라가지 않습니다(.gitignore). 기기를 옮길 때 이 파일도 같이 옮기세요.
+
+## (선택) 카카오 앱 & 토큰
 
 [developers.kakao.com](https://developers.kakao.com) → 내 애플리케이션 → 앱 추가 후:
 
@@ -82,12 +94,12 @@ PC가 꺼져 있다가 켜지면 바로 한 번 실행되고, 상품권 카테�
    ```sh
    git clone https://github.com/hangeul970709-beep/hotdeal-alert ~/hotdeal-alert && cd ~/hotdeal-alert && pip install -r requirements.txt
    ```
-3. **PC에서 `kakao_token.json`, `seen.json` 옮기기** — USB 케이블로 태블릿의 `Download` 폴더에 복사한 뒤:
+3. **PC에서 `telegram_token.json`, `seen.json` 옮기기** — USB 케이블로 태블릿의 `Download` 폴더에 복사한 뒤:
    ```sh
    termux-setup-storage
    ```
    ```sh
-   cp ~/storage/downloads/kakao_token.json ~/storage/downloads/seen.json ~/hotdeal-alert/ && rm ~/storage/downloads/kakao_token.json
+   cp ~/storage/downloads/telegram_token.json ~/storage/downloads/seen.json ~/hotdeal-alert/ && rm ~/storage/downloads/telegram_token.json
    ```
 4. **동작 확인**
    ```sh
@@ -141,7 +153,7 @@ PC가 꺼져 있다가 켜지면 바로 한 번 실행되고, 상품권 카테�
 
 ## 기기를 옮길 때 체크리스트
 
-- `kakao_token.json` 과 `seen.json` 을 **같이** 옮기기 (seen.json이 없으면 첫 실행은 기존 글을 기록만 하고 알림을 보내지 않습니다)
+- `telegram_token.json`(카톡도 쓰면 `kakao_token.json`)과 `seen.json` 을 **같이** 옮기기 (seen.json이 없으면 첫 실행은 기존 글을 기록만 하고 알림을 보내지 않습니다)
 - 한 번에 **한 기기에서만** 돌리기 — 두 곳에서 돌리면 알림이 두 번 오고, refresh token이 갱신될 때 한쪽 토큰이 낡을 수 있습니다
 - 카카오 refresh token은 약 2개월 동안 한 번도 안 쓰면 만료됩니다. 그러면 PC에서 `kakao_login.py` 를 다시 실행해 새 `kakao_token.json` 을 만드세요
 

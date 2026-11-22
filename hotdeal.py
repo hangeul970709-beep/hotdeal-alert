@@ -20,6 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 
 import kakao
+import telegram_notify
 
 ROOT = Path(__file__).resolve().parent
 CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
@@ -51,6 +52,23 @@ def log(msg: str) -> None:
             LOG_PATH.write_text(LOG_PATH.read_text(encoding="utf-8")[-500_000:], encoding="utf-8")
         with LOG_PATH.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+
+SENDERS = {"telegram": telegram_notify.send, "kakao": kakao.send_memo}
+
+
+def notify(text: str, url: str) -> None:
+    """config.json 의 notify 목록(telegram / kakao)으로 보냅니다. 하나라도 성공하면 성공."""
+    errs = []
+    for name in CFG.get("notify", ["telegram"]):
+        try:
+            SENDERS[name](text, url)
+        except Exception as e:
+            errs.append(f"{name}: {e}")
+    if errs:
+        log("알림 일부 실패 " + " / ".join(errs))
+        if len(errs) == len(CFG.get("notify", ["telegram"])):
+            raise RuntimeError("모든 알림 전송 실패")
 
 
 @dataclass
@@ -284,7 +302,7 @@ def main() -> int:
     WRITE_LOG = not args.dry_run
 
     if args.test:
-        kakao.send_memo("[핫딜 알리미] 테스트 메시지입니다. 연결 성공!", "https://arca.live/b/hotdeal")
+        notify("[핫딜 알리미] 테스트 메시지입니다. 연결 성공!", "https://arca.live/b/hotdeal")
         log("테스트 메시지 전송 완료")
         return 0
 
@@ -325,7 +343,7 @@ def main() -> int:
             BLOCKED_PATH.write_text(json.dumps(blocked, indent=2), encoding="utf-8")
             log(f"{host} 가 요청을 거부해 이 사이트 확인을 멈췄습니다.")
             try:
-                kakao.send_memo(f"[핫딜 알리미] {host} 가 요청을 거부해서 이 사이트 확인을 멈췄어요. "
+                notify(f"[핫딜 알리미] {host} 가 요청을 거부해서 이 사이트 확인을 멈췄어요. "
                                 "다른 사이트는 계속 확인합니다. 재개하려면 blocked.json 에서 지우세요.", f"https://{host}")
             except Exception as e:
                 log(f"정지 알림 전송 실패: {e}")
@@ -357,11 +375,11 @@ def main() -> int:
         if ok:
             text = f"🔥 상품권 핫딜 {disc[0]}%\n{d.title}\n가격: {price_txt} / {d.mall}\n할인율: {rate_txt}\n[{d.site}] {d.url}"
             try:
-                kakao.send_memo(text, d.url)
+                notify(text, d.url)
                 sent += 1
                 log(f"sent {d.key} {rate_txt} {d.title}")
             except Exception as e:
-                log(f"카톡 전송 실패 {d.key}: {e}")
+                log(f"알림 전송 실패 {d.key}: {e}")
                 continue  # 다음 실행 때 재시도
         else:
             log(f"skip {d.key} {rate_txt} {d.title}")
