@@ -2,7 +2,7 @@ name: hotdeal-alert
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # 10분마다 (GitHub 사정에 따라 몇 분 늦어질 수 있음)
+    - cron: "7,37 * * * *"   # 30분마다 (정각 혼잡을 피해 7분/37분, GitHub 사정에 따라 몇 분 늦어질 수 있음)
   workflow_dispatch:
     inputs:
       test:
