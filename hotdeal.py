@@ -1,4 +1,4 @@
-"""상품권 핫딜 알리미: 펨코 / 아카라이브 핫딜 게시판 -> 카카오톡 '나에게 보내기'
+"""상품권 핫딜 알리미: 아카라이브 핫딜 + 뽐뿌·루리웹 RSS -> 카카오톡 '나에게 보내기'
 
 python hotdeal.py            새 글 확인 후 조건 맞으면 카톡 전송, seen.json 갱신
 python hotdeal.py --dry-run  전송/기록 없이 파싱 결과만 출력
@@ -10,10 +10,11 @@ import json
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -37,7 +38,7 @@ def seen_id(key: str) -> str:
 
 
 LOG_PATH = ROOT / "hotdeal.log"
-BLOCK_FLAG = ROOT / "blocked.flag"
+BLOCKED_PATH = ROOT / "blocked.json"
 WRITE_LOG = True  # --dry-run 이면 끔
 
 
@@ -60,11 +61,18 @@ class Deal:
     mall: str
     price: int | None
     url: str
+    body: str | None = None           # RSS 에 본문 요약이 있으면 그걸 사용 (추가 요청 없음)
+    body_selector: str | None = None  # 없으면 글 페이지에서 이 선택자로 본문을 읽음
+
+
+def fetch(url: str) -> requests.Response:
+    r = SESSION.get(url, headers=HEADERS, timeout=20)
+    r.raise_for_status()
+    return r
 
 
 def get_html(url: str) -> BeautifulSoup:
-    r = SESSION.get(url, headers=HEADERS, timeout=20)
-    r.raise_for_status()
+    r = fetch(url)
     r.encoding = "utf-8"
     return BeautifulSoup(r.text, "html.parser")
 
@@ -129,22 +137,65 @@ def parse_arca(soup: BeautifulSoup) -> list[Deal]:
     return deals
 
 
-def list_urls() -> list[tuple[str, callable]]:
-    urls = []
+def title_price(title: str) -> int | None:
+    """RSS 제목의 가격: '(쿠폰 적용 11,210원/무료)' -> 11210. '50,000원권' 같은 액면가는 제외."""
+    vals = re.findall(r"(\d{1,3}(?:,\d{3})+|\d{4,})\s*원(?!\s*권)", title)
+    return to_won(vals[-1]) if vals else None
+
+
+def parse_rss(src: dict) -> list[Deal]:
+    """사이트가 공식 제공하는 RSS 피드. src: config.json 의 rss 항목."""
+    root = ET.fromstring(fetch(src["url"]).content)
+    deals = []
+    for it in root.iter("item"):
+        title = clean(it.findtext("title"))
+        link = (it.findtext("link") or "").strip().replace("http://", "https://", 1)
+        m = re.search(src["idPattern"], link)
+        if not title or not m:
+            continue
+        mall = re.match(r"\[([^\]]+)\]", title)
+        desc = it.findtext("description")
+        deals.append(Deal(
+            key=f"{src['key']}:{m.group(1)}", site=src["site"], title=title,
+            mall=mall.group(1) if mall else "", price=title_price(title), url=link,
+            body=clean(BeautifulSoup(desc, "html.parser").get_text(" ")) if src.get("bodyFromDescription") and desc else None,
+            body_selector=src.get("bodySelector"),
+        ))
+    return deals
+
+
+def sources() -> list[tuple[str, callable]]:
+    """(설명용 URL, 글 목록을 돌려주는 함수) 목록."""
+    out = []
     for c in CFG["fmkorea"]["categories"]:
-        urls.append((f"https://www.fmkorea.com/index.php?mid=hotdeal&category={c}", parse_fm))
+        u = f"https://www.fmkorea.com/index.php?mid=hotdeal&category={c}"
+        out.append((u, lambda u=u: parse_fm(get_html(u))))
     for kw in CFG["fmkorea"]["searchKeywords"]:
-        urls.append((f"https://www.fmkorea.com/search.php?mid=hotdeal&search_target=title&search_keyword={quote(kw)}", parse_fm))
+        u = f"https://www.fmkorea.com/search.php?mid=hotdeal&search_target=title&search_keyword={quote(kw)}"
+        out.append((u, lambda u=u: parse_fm(get_html(u))))
     for c in CFG["arca"]["categories"]:  # "" = 전체 최신글
-        urls.append(("https://arca.live/b/hotdeal" + (f"?category={c}" if c else ""), parse_arca))
+        u = "https://arca.live/b/hotdeal" + (f"?category={c}" if c else "")
+        out.append((u, lambda u=u: parse_arca(get_html(u))))
     for kw in CFG["arca"]["searchKeywords"]:
-        urls.append((f"https://arca.live/b/hotdeal?target=title&keyword={quote(kw)}", parse_arca))
-    return urls
+        u = f"https://arca.live/b/hotdeal?target=title&keyword={quote(kw)}"
+        out.append((u, lambda u=u: parse_arca(get_html(u))))
+    for src in CFG.get("rss", []):
+        out.append((src["url"], lambda s=src: parse_rss(s)))
+    return out
 
 
 def post_text(deal: Deal) -> str:
-    soup = get_html(deal.url)
-    node = soup.select_one("article") if deal.site == "펨코" else soup.select_one(".article-content")
+    if deal.body is not None:
+        return deal.body
+    if deal.site == "펨코":
+        sel = "article"
+    elif deal.site == "아카":
+        sel = ".article-content"
+    elif deal.body_selector:
+        sel = deal.body_selector
+    else:
+        return ""
+    node = get_html(deal.url).select_one(sel)
     text = clean(node.get_text(" ")) if node else ""
     return text.split("유사한 최근")[0]
 
@@ -157,7 +208,9 @@ def percent_in(text: str) -> float | None:
 
 
 def face_value(text: str) -> float | None:
-    faces = [float(v) * 10000 for v in re.findall(r"(\d+(?:\.\d+)?)\s*만\s*원?", text)]
+    # '5만원', '4만2천원권' 같은 표기
+    faces = [float(m) * 10000 + (float(c) * 1000 if c else 0)
+             for m, c in re.findall(r"(\d+(?:\.\d+)?)\s*만\s*(?:(\d)\s*천)?\s*원?", text)]
     faces += [float(v.replace(",", "")) for v in re.findall(r"(\d{1,3}(?:,\d{3})+)\s*원\s*권", text)]
     if not faces:
         return None
@@ -213,48 +266,60 @@ def main() -> int:
         log("테스트 메시지 전송 완료")
         return 0
 
-    if BLOCK_FLAG.exists() and not args.dry_run:
-        log("정지 중: 사이트 차단이 감지돼 멈춘 상태입니다. 확인 후 blocked.flag 를 지우면 재개됩니다.")
-        return 0
-
-    seen: list[str] = json.loads(SEEN_PATH.read_text(encoding="utf-8")) if SEEN_PATH.exists() else []
+    # seen.json: {"ids": [해시...], "sources": [처음 기록을 마친 사이트 키...]} (예전 형식: 해시 리스트)
+    state = json.loads(SEEN_PATH.read_text(encoding="utf-8")) if SEEN_PATH.exists() else {}
+    if isinstance(state, list):
+        state = {"ids": state, "sources": ["arca"] if state else []}
+    seen: list[str] = state.get("ids", [])
     seen_set = set(seen)
-    first_run = not seen_set and not CFG.get("notifyOnFirstRun", False)
+    ready_sources = set(state.get("sources", []))
+    notify_first = CFG.get("notifyOnFirstRun", False)
 
+    # 차단된 사이트(호스트)는 건너뜁니다. blocked.json 에서 지우면 재개.
+    blocked: dict = json.loads(BLOCKED_PATH.read_text(encoding="utf-8")) if BLOCKED_PATH.exists() else {}
     deals: dict[str, Deal] = {}
-    errors = forbidden = 0
-    urls = list_urls()
-    for url, parser in urls:
+    errors = 0
+    tried: dict[str, int] = {}
+    refused: dict[str, int] = {}
+    for url, get_deals in sources():
+        host = urlparse(url).hostname
+        if host in blocked and not args.dry_run:
+            continue
+        tried[host] = tried.get(host, 0) + 1
         try:
-            for d in parser(get_html(url)):
+            for d in get_deals():
                 deals.setdefault(d.key, d)
         except Exception as e:
             errors += 1
             if isinstance(e, requests.HTTPError) and e.response is not None and e.response.status_code in (403, 429, 430):
-                forbidden += 1
+                refused[host] = refused.get(host, 0) + 1
             log(f"목록 실패 {url}: {e}")
         time.sleep(1.5)
 
-    # 모든 목록이 거부(403 등)되면 사이트가 이 봇을 막은 것으로 보고 스스로 멈춥니다 (우회하지 않음).
-    if forbidden == len(urls) and not args.dry_run:
-        BLOCK_FLAG.write_text(datetime.now().isoformat(), encoding="utf-8")
-        log("사이트가 요청을 거부해 알리미를 멈췄습니다.")
-        try:
-            kakao.send_memo("[핫딜 알리미] 사이트가 요청을 거부해서 알리미를 멈췄어요. "
-                            "확인 후 blocked.flag 파일을 지우면 다시 돌아갑니다.", "https://arca.live/b/hotdeal")
-        except Exception as e:
-            log(f"정지 알림 전송 실패: {e}")
-        return 1
+    # 한 사이트의 요청이 모두 거부(403 등)되면 그 사이트가 이 봇을 막은 것으로 보고 그 사이트만 멈춥니다 (우회하지 않음).
+    for host, n in tried.items():
+        if refused.get(host) == n and not args.dry_run:
+            blocked[host] = datetime.now().isoformat(timespec="seconds")
+            BLOCKED_PATH.write_text(json.dumps(blocked, indent=2), encoding="utf-8")
+            log(f"{host} 가 요청을 거부해 이 사이트 확인을 멈췄습니다.")
+            try:
+                kakao.send_memo(f"[핫딜 알리미] {host} 가 요청을 거부해서 이 사이트 확인을 멈췄어요. "
+                                "다른 사이트는 계속 확인합니다. 재개하려면 blocked.json 에서 지우세요.", f"https://{host}")
+            except Exception as e:
+                log(f"정지 알림 전송 실패: {e}")
 
     title_re = re.compile(CFG["titleFilter"], re.I)
     sent = 0
+    got_sources = {d.key.split(":")[0] for d in deals.values()}
+    new_sources = set() if notify_first else got_sources - ready_sources
     for d in deals.values():
         if not title_re.search(d.title):
             continue
         sid = seen_id(d.key)
         if sid in seen_set and not args.dry_run:
             continue
-        if first_run and not args.dry_run:  # 첫 실행: 기존 글은 기록만 하고 알림 안 보냄
+        # 사이트별 첫 실행: 이미 올라와 있던 글은 기록만 하고 알림 안 보냄
+        if d.key.split(":")[0] in new_sources and not args.dry_run:
             seen.append(sid); seen_set.add(sid)
             continue
 
@@ -281,9 +346,11 @@ def main() -> int:
         seen.append(sid); seen_set.add(sid)
 
     if not args.dry_run:
-        SEEN_PATH.write_text(json.dumps(seen[-3000:], ensure_ascii=False, indent=0), encoding="utf-8")
-        log(f"완료: 수집 {len(deals)}건, 전송 {sent}건, 목록 오류 {errors}건" + (" (첫 실행: 기존 글 기록)" if first_run else ""))
-    # 모든 목록 요청이 실패하면 차단 가능성 -> Actions 실패로 표시해 알 수 있게
+        state = {"sources": sorted(ready_sources | got_sources), "ids": seen[-3000:]}
+        SEEN_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+        log(f"완료: 수집 {len(deals)}건, 전송 {sent}건, 목록 오류 {errors}건"
+            + (f" (첫 실행 기록: {', '.join(sorted(new_sources))})" if new_sources else ""))
+    # 모든 목록 요청이 실패하면 실패 코드로 끝내 작업 스케줄러 기록에서 알 수 있게
     return 1 if errors and not deals else 0
 
 

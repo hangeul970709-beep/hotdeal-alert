@@ -9,5 +9,19 @@
   "arca": {
     "categories": ["gift", ""],
     "searchKeywords": []
-  }
+  },
+  "rss": [
+    {
+      "site": "뽐뿌", "key": "ppom",
+      "url": "https://www.ppomppu.co.kr/rss.php?id=ppomppu",
+      "idPattern": "[?&]no=(\\d+)",
+      "bodyFromDescription": true
+    },
+    {
+      "site": "루리웹", "key": "ruli",
+      "url": "https://bbs.ruliweb.com/market/board/1020/rss",
+      "idPattern": "/read/(\\d+)",
+      "bodySelector": ".view_content"
+    }
+  ]
 }
