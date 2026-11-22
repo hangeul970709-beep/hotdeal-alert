@@ -1,4 +1,4 @@
-"""상품권 핫딜 알리미: 아카라이브 핫딜 + 뽐뿌·루리웹 RSS -> 카카오톡 '나에게 보내기'
+"""상품권 핫딜 알리미: 아카라이브·클리앙 핫딜 + 뽐뿌·루리웹 RSS -> 카카오톡 '나에게 보내기'
 
 python hotdeal.py            새 글 확인 후 조건 맞으면 카톡 전송, seen.json 갱신
 python hotdeal.py --dry-run  전송/기록 없이 파싱 결과만 출력
@@ -137,6 +137,25 @@ def parse_arca(soup: BeautifulSoup) -> list[Deal]:
     return deals
 
 
+def parse_clien(soup: BeautifulSoup, board: str) -> list[Deal]:
+    deals = []
+    for row in soup.select("div.list_item.symph_row"):
+        sn = row.get("data-board-sn")
+        if not sn or "sold_out" in (row.get("class") or []):  # 공지/광고, 품절된 딜 제외
+            continue
+        sub = row.select_one("span.list_subject")
+        title = clean(sub.get("title") or sub.get_text(" ")) if sub else ""
+        if not title:
+            continue
+        mall = re.match(r"\[([^\]]+)\]", title)
+        deals.append(Deal(
+            key=f"clien:{sn}", site="클리앙", title=title,
+            mall=mall.group(1) if mall else "", price=title_price(title),
+            url=f"https://www.clien.net/service/board/{board}/{sn}", body_selector="article",
+        ))
+    return deals
+
+
 def title_price(title: str) -> int | None:
     """RSS 제목의 가격: '(쿠폰 적용 11,210원/무료)' -> 11210. '50,000원권' 같은 액면가는 제외."""
     vals = re.findall(r"(\d{1,3}(?:,\d{3})+|\d{4,})\s*원(?!\s*권)", title)
@@ -179,6 +198,9 @@ def sources() -> list[tuple[str, callable]]:
     for kw in CFG["arca"]["searchKeywords"]:
         u = f"https://arca.live/b/hotdeal?target=title&keyword={quote(kw)}"
         out.append((u, lambda u=u: parse_arca(get_html(u))))
+    for b in CFG.get("clien", {}).get("boards", []):
+        u = f"https://www.clien.net/service/board/{b}"
+        out.append((u, lambda u=u, b=b: parse_clien(get_html(u), b)))
     for src in CFG.get("rss", []):
         out.append((src["url"], lambda s=src: parse_rss(s)))
     return out

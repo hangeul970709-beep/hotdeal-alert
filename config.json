@@ -10,6 +10,9 @@
     "categories": ["gift", ""],
     "searchKeywords": []
   },
+  "clien": {
+    "boards": ["jirum"]
+  },
   "rss": [
     {
       "site": "뽐뿌", "key": "ppom",
