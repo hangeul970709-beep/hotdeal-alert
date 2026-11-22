@@ -5,6 +5,7 @@ python hotdeal.py --dry-run  전송/기록 없이 파싱 결과만 출력
 python hotdeal.py --test     카톡 테스트 메시지 전송
 """
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -14,16 +15,25 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
+import requests
 from bs4 import BeautifulSoup
-from curl_cffi import requests
 
 import kakao
 
 ROOT = Path(__file__).resolve().parent
 CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 SEEN_PATH = ROOT / "seen.json"
-SESSION = requests.Session(impersonate="chrome")
-HEADERS = {"Accept-Language": "ko-KR,ko;q=0.9"}
+SESSION = requests.Session()
+# 브라우저로 위장하지 않고 봇임을 그대로 밝힙니다. 사이트가 막으면(403) 그 의사를 따릅니다.
+HEADERS = {
+    "User-Agent": "hotdeal-alert/1.0 (personal gift card deal notifier)",
+    "Accept-Language": "ko-KR,ko;q=0.9",
+}
+
+
+def seen_id(key: str) -> str:
+    """글 번호를 그대로 저장하지 않도록 해시로 바꿉니다 (공개 저장소에 사이트 데이터가 남지 않게)."""
+    return hashlib.sha256(f"hotdeal-alert:{key}".encode()).hexdigest()[:16]
 
 
 def log(msg: str) -> None:
@@ -43,6 +53,7 @@ class Deal:
 def get_html(url: str) -> BeautifulSoup:
     r = SESSION.get(url, headers=HEADERS, timeout=20)
     r.raise_for_status()
+    r.encoding = "utf-8"
     return BeautifulSoup(r.text, "html.parser")
 
 
@@ -112,8 +123,8 @@ def list_urls() -> list[tuple[str, callable]]:
         urls.append((f"https://www.fmkorea.com/index.php?mid=hotdeal&category={c}", parse_fm))
     for kw in CFG["fmkorea"]["searchKeywords"]:
         urls.append((f"https://www.fmkorea.com/search.php?mid=hotdeal&search_target=title&search_keyword={quote(kw)}", parse_fm))
-    for c in CFG["arca"]["categories"]:
-        urls.append((f"https://arca.live/b/hotdeal?category={c}", parse_arca))
+    for c in CFG["arca"]["categories"]:  # "" = 전체 최신글
+        urls.append(("https://arca.live/b/hotdeal" + (f"?category={c}" if c else ""), parse_arca))
     for kw in CFG["arca"]["searchKeywords"]:
         urls.append((f"https://arca.live/b/hotdeal?target=title&keyword={quote(kw)}", parse_arca))
     return urls
@@ -208,10 +219,11 @@ def main() -> int:
     for d in deals.values():
         if not title_re.search(d.title):
             continue
-        if d.key in seen_set and not args.dry_run:
+        sid = seen_id(d.key)
+        if sid in seen_set and not args.dry_run:
             continue
         if first_run and not args.dry_run:  # 첫 실행: 기존 글은 기록만 하고 알림 안 보냄
-            seen.append(d.key); seen_set.add(d.key)
+            seen.append(sid); seen_set.add(sid)
             continue
 
         disc = discount(d)
@@ -234,7 +246,7 @@ def main() -> int:
                 continue  # 다음 실행 때 재시도
         else:
             log(f"skip {d.key} {rate_txt} {d.title}")
-        seen.append(d.key); seen_set.add(d.key)
+        seen.append(sid); seen_set.add(sid)
 
     if not args.dry_run:
         SEEN_PATH.write_text(json.dumps(seen[-3000:], ensure_ascii=False, indent=0), encoding="utf-8")

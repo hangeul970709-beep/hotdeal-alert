@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 
-from curl_cffi import requests
+import requests
 
 ROOT = Path(__file__).resolve().parent
 TOKEN_FILE = ROOT / "kakao_token.json"
